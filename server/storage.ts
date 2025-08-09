@@ -1,8 +1,11 @@
+import { eq, desc, and } from 'drizzle-orm';
+import { db } from './db';
 import { 
+  users, chatSessions, messages, uploadedFiles, userUsage, subscriptions,
   User, InsertUser, ChatSession, InsertChatSession, Message, InsertMessage,
   UploadedFile, InsertUploadedFile, UserUsage, InsertUserUsage,
   Subscription, InsertSubscription
-} from "@shared/schema";
+} from './db';
 
 export interface IStorage {
   // Users
@@ -39,214 +42,313 @@ export interface IStorage {
   updateSubscription(id: string, updates: Partial<Subscription>): Promise<Subscription>;
 }
 
-// In-memory storage implementation for development
-class MemoryStorage implements IStorage {
-  private users: Map<string, User> = new Map();
-  private sessions: Map<string, ChatSession> = new Map();
-  private messagesBySession: Map<string, Message[]> = new Map();
-  private files: Map<string, UploadedFile> = new Map();
-  private usage: Map<string, UserUsage> = new Map();
-  private subscriptions: Map<string, Subscription> = new Map();
-  
-  private generateId(): string {
-    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-  }
-
+class DrizzleStorage implements IStorage {
   // Users
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+    try {
+      const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error('Error getting user:', error);
+      throw new Error('Failed to get user');
+    }
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    for (const user of this.users.values()) {
-      if (user.email === email) return user;
+    try {
+      const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error('Error getting user by email:', error);
+      throw new Error('Failed to get user by email');
     }
-    return undefined;
   }
 
   async createUser(userData: InsertUser): Promise<User> {
-    const id = this.generateId();
-    const now = new Date();
-    const user: User = {
-      id,
-      ...userData,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.users.set(id, user);
-    return user;
+    try {
+      const result = await db.insert(users).values(userData).returning();
+      return result[0];
+    } catch (error) {
+      console.error('Error creating user:', error);
+      throw new Error('Failed to create user');
+    }
   }
 
   async updateUser(id: string, updates: Partial<User>): Promise<User> {
-    const user = this.users.get(id);
-    if (!user) throw new Error('User not found');
-    
-    const updatedUser = { ...user, ...updates, updatedAt: new Date() };
-    this.users.set(id, updatedUser);
-    return updatedUser;
+    try {
+      const result = await db
+        .update(users)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(users.id, id))
+        .returning();
+      
+      if (result.length === 0) {
+        throw new Error('User not found');
+      }
+      
+      return result[0];
+    } catch (error) {
+      console.error('Error updating user:', error);
+      throw new Error('Failed to update user');
+    }
   }
 
   // Chat Sessions
   async getUserSessions(userId: string): Promise<ChatSession[]> {
-    return Array.from(this.sessions.values())
-      .filter(session => session.userId === userId)
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    try {
+      const result = await db
+        .select()
+        .from(chatSessions)
+        .where(eq(chatSessions.userId, userId))
+        .orderBy(desc(chatSessions.updatedAt));
+      
+      return result;
+    } catch (error) {
+      console.error('Error getting user sessions:', error);
+      throw new Error('Failed to get user sessions');
+    }
   }
 
   async getSession(id: string): Promise<ChatSession | undefined> {
-    return this.sessions.get(id);
+    try {
+      const result = await db.select().from(chatSessions).where(eq(chatSessions.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error('Error getting session:', error);
+      throw new Error('Failed to get session');
+    }
   }
 
   async createSession(sessionData: InsertChatSession): Promise<ChatSession> {
-    const id = this.generateId();
-    const now = new Date();
-    const session: ChatSession = {
-      id,
-      ...sessionData,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.sessions.set(id, session);
-    return session;
+    try {
+      const result = await db.insert(chatSessions).values(sessionData).returning();
+      return result[0];
+    } catch (error) {
+      console.error('Error creating session:', error);
+      throw new Error('Failed to create session');
+    }
   }
 
   async updateSession(id: string, updates: Partial<ChatSession>): Promise<ChatSession> {
-    const session = this.sessions.get(id);
-    if (!session) throw new Error('Session not found');
-    
-    const updatedSession = { ...session, ...updates, updatedAt: new Date() };
-    this.sessions.set(id, updatedSession);
-    return updatedSession;
+    try {
+      const result = await db
+        .update(chatSessions)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(chatSessions.id, id))
+        .returning();
+      
+      if (result.length === 0) {
+        throw new Error('Session not found');
+      }
+      
+      return result[0];
+    } catch (error) {
+      console.error('Error updating session:', error);
+      throw new Error('Failed to update session');
+    }
   }
 
   // Messages
   async getSessionMessages(sessionId: string): Promise<Message[]> {
-    return this.messagesBySession.get(sessionId) || [];
+    try {
+      const result = await db
+        .select()
+        .from(messages)
+        .where(eq(messages.sessionId, sessionId))
+        .orderBy(messages.createdAt);
+      
+      return result;
+    } catch (error) {
+      console.error('Error getting session messages:', error);
+      throw new Error('Failed to get session messages');
+    }
   }
 
   async createMessage(messageData: InsertMessage): Promise<Message> {
-    const id = this.generateId();
-    const message: Message = {
-      id,
-      ...messageData,
-      createdAt: new Date(),
-    };
-    
-    const sessionMessages = this.messagesBySession.get(messageData.sessionId) || [];
-    sessionMessages.push(message);
-    this.messagesBySession.set(messageData.sessionId, sessionMessages);
-    
-    return message;
+    try {
+      const result = await db.insert(messages).values(messageData).returning();
+      return result[0];
+    } catch (error) {
+      console.error('Error creating message:', error);
+      throw new Error('Failed to create message');
+    }
   }
 
   // Files
   async getUserFiles(userId: string): Promise<UploadedFile[]> {
-    return Array.from(this.files.values())
-      .filter(file => file.userId === userId)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    try {
+      const result = await db
+        .select()
+        .from(uploadedFiles)
+        .where(eq(uploadedFiles.userId, userId))
+        .orderBy(desc(uploadedFiles.createdAt));
+      
+      return result;
+    } catch (error) {
+      console.error('Error getting user files:', error);
+      throw new Error('Failed to get user files');
+    }
   }
 
   async getSessionFiles(sessionId: string): Promise<UploadedFile[]> {
-    return Array.from(this.files.values())
-      .filter(file => file.sessionId === sessionId)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    try {
+      const result = await db
+        .select()
+        .from(uploadedFiles)
+        .where(eq(uploadedFiles.sessionId, sessionId))
+        .orderBy(desc(uploadedFiles.createdAt));
+      
+      return result;
+    } catch (error) {
+      console.error('Error getting session files:', error);
+      throw new Error('Failed to get session files');
+    }
   }
 
   async createFile(fileData: InsertUploadedFile): Promise<UploadedFile> {
-    const id = this.generateId();
-    const file: UploadedFile = {
-      id,
-      ...fileData,
-      createdAt: new Date(),
-    };
-    this.files.set(id, file);
-    return file;
+    try {
+      const result = await db.insert(uploadedFiles).values(fileData).returning();
+      return result[0];
+    } catch (error) {
+      console.error('Error creating file:', error);
+      throw new Error('Failed to create file');
+    }
   }
 
   async updateFile(id: string, updates: Partial<UploadedFile>): Promise<UploadedFile> {
-    const file = this.files.get(id);
-    if (!file) throw new Error('File not found');
-    
-    const updatedFile = { ...file, ...updates };
-    this.files.set(id, updatedFile);
-    return updatedFile;
+    try {
+      const result = await db
+        .update(uploadedFiles)
+        .set(updates)
+        .where(eq(uploadedFiles.id, id))
+        .returning();
+      
+      if (result.length === 0) {
+        throw new Error('File not found');
+      }
+      
+      return result[0];
+    } catch (error) {
+      console.error('Error updating file:', error);
+      throw new Error('Failed to update file');
+    }
   }
 
   // Usage
   async getUserUsage(userId: string): Promise<UserUsage | undefined> {
-    return this.usage.get(userId);
+    try {
+      const result = await db.select().from(userUsage).where(eq(userUsage.userId, userId)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error('Error getting user usage:', error);
+      throw new Error('Failed to get user usage');
+    }
   }
 
   async createUsage(usageData: InsertUserUsage): Promise<UserUsage> {
-    const id = this.generateId();
-    const now = new Date();
-    const usage: UserUsage = {
-      id,
-      ...usageData,
-      resetDate: now,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.usage.set(usageData.userId, usage);
-    return usage;
+    try {
+      const result = await db.insert(userUsage).values(usageData).returning();
+      return result[0];
+    } catch (error) {
+      console.error('Error creating usage:', error);
+      throw new Error('Failed to create usage');
+    }
   }
 
   async updateUsage(userId: string, updates: Partial<UserUsage>): Promise<UserUsage> {
-    const usage = this.usage.get(userId);
-    if (!usage) throw new Error('Usage not found');
-    
-    const updatedUsage = { ...usage, ...updates, updatedAt: new Date() };
-    this.usage.set(userId, updatedUsage);
-    return updatedUsage;
+    try {
+      const result = await db
+        .update(userUsage)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(userUsage.userId, userId))
+        .returning();
+      
+      if (result.length === 0) {
+        throw new Error('Usage record not found');
+      }
+      
+      return result[0];
+    } catch (error) {
+      console.error('Error updating usage:', error);
+      throw new Error('Failed to update usage');
+    }
   }
 
   async incrementUsage(userId: string, type: 'messages' | 'documents'): Promise<UserUsage> {
-    let usage = await this.getUserUsage(userId);
-    
-    if (!usage) {
-      usage = await this.createUsage({ userId, messagesUsed: 0, documentsUploaded: 0 });
+    try {
+      let usage = await this.getUserUsage(userId);
+      
+      if (!usage) {
+        usage = await this.createUsage({ userId, messagesUsed: 0, documentsUploaded: 0 });
+      }
+
+      const updates = type === 'messages' 
+        ? { messagesUsed: usage.messagesUsed + 1 }
+        : { documentsUploaded: usage.documentsUploaded + 1 };
+
+      return this.updateUsage(userId, updates);
+    } catch (error) {
+      console.error('Error incrementing usage:', error);
+      throw new Error('Failed to increment usage');
     }
-
-    const updates = type === 'messages' 
-      ? { messagesUsed: usage.messagesUsed + 1 }
-      : { documentsUploaded: usage.documentsUploaded + 1 };
-
-    return this.updateUsage(userId, updates);
   }
 
   // Subscriptions
   async getUserSubscription(userId: string): Promise<Subscription | undefined> {
-    for (const subscription of this.subscriptions.values()) {
-      if (subscription.userId === userId && 
-          subscription.status === 'active' && 
-          subscription.currentPeriodEnd > new Date()) {
+    try {
+      const result = await db
+        .select()
+        .from(subscriptions)
+        .where(
+          and(
+            eq(subscriptions.userId, userId),
+            eq(subscriptions.status, 'active')
+          )
+        )
+        .orderBy(desc(subscriptions.currentPeriodEnd))
+        .limit(1);
+      
+      // Check if subscription is still valid
+      const subscription = result[0];
+      if (subscription && subscription.currentPeriodEnd > new Date()) {
         return subscription;
       }
+      
+      return undefined;
+    } catch (error) {
+      console.error('Error getting user subscription:', error);
+      throw new Error('Failed to get user subscription');
     }
-    return undefined;
   }
 
   async createSubscription(subscriptionData: InsertSubscription): Promise<Subscription> {
-    const id = this.generateId();
-    const now = new Date();
-    const subscription: Subscription = {
-      id,
-      ...subscriptionData,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.subscriptions.set(id, subscription);
-    return subscription;
+    try {
+      const result = await db.insert(subscriptions).values(subscriptionData).returning();
+      return result[0];
+    } catch (error) {
+      console.error('Error creating subscription:', error);
+      throw new Error('Failed to create subscription');
+    }
   }
 
   async updateSubscription(id: string, updates: Partial<Subscription>): Promise<Subscription> {
-    const subscription = this.subscriptions.get(id);
-    if (!subscription) throw new Error('Subscription not found');
-    
-    const updatedSubscription = { ...subscription, ...updates, updatedAt: new Date() };
-    this.subscriptions.set(id, updatedSubscription);
-    return updatedSubscription;
+    try {
+      const result = await db
+        .update(subscriptions)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(subscriptions.id, id))
+        .returning();
+      
+      if (result.length === 0) {
+        throw new Error('Subscription not found');
+      }
+      
+      return result[0];
+    } catch (error) {
+      console.error('Error updating subscription:', error);
+      throw new Error('Failed to update subscription');
+    }
   }
 }
 
-export const storage = new MemoryStorage();
+export const storage = new DrizzleStorage();
